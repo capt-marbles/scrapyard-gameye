@@ -1,61 +1,69 @@
-import { MAPS, type MapId } from '../src/game/maps'
 import { initPhysics } from '../src/game/physics'
 import { arenaData } from './arenas'
 import { createGameServer } from './server'
+import { verifyRoomsToken } from './rooms-auth'
+import { RoomsLifecycle } from './rooms-lifecycle'
 
-// The game server's entry: settings from the environment, the physics
-// engine and every arena built up front (a player never waits on one), then
-// the server. Stops cleanly on SIGTERM / SIGINT (a deploy, Ctrl-C):
-// everyone in a match is told, and the matches end.
-//   PORT                   7360
-//   NAKAMA_ENCRYPTION_KEY  Nakama's session.encryption_key (local default: Nakama's own default;
-//                          with TRUST_PROXY it must be set, and not to that default, or the server won't start)
-//   ALLOWED_ORIGINS        pages that may connect, comma-separated (default: localhost and 127.0.0.1, any port)
-//   MAX_ROOMS              rooms at once (default 12)
-//   TRUST_PROXY            1 behind a proxy that is the only way in (Caddy): addresses from X-Forwarded-For;
-//                          production, so pages from Vite's dev server (build 'dev') are refused too
-//   NET_LAG_MS             development only: ms added each way to every message
-//   NET_JITTER_MS          development only: ms either side of NET_LAG_MS, message by message (order kept)
-
+// Guest-only, one Rooms match per Gameye session. No Nakama dependency.
 const env = process.env
-const refuse = (reason: string): never => {
-  console.error(JSON.stringify({ time: new Date().toISOString(), msg: 'not starting', reason }))
-  process.exit(1)
+const required = (name: string) => {
+  const value = env[name]
+  if (!value) throw new Error(`Missing ${name}`)
+  return value
 }
-const list = (value: string | undefined, fallback: string[]) => (value ? value.split(',').map((s) => s.trim()).filter(Boolean) : fallback)
-// A whole number from the environment, or the default when it's unset. Anything
-// else stops the server: a setting that reads as NaN fails quietly elsewhere
-// (MAX_ROOMS as NaN once left the matcher no room to open, so nobody was matched).
-const whole = (name: string, fallback: number, least: number) => {
-  const raw = env[name]
-  if (raw === undefined || raw === '') return fallback
-  const value = Number(raw)
-  return Number.isInteger(value) && value >= least ? value : refuse(`${name} is ${JSON.stringify(raw)}: a whole number of ${least} or more`)
+const number = (name: string, fallback: number) => {
+  const value = Number(env[name] ?? fallback)
+  if (!Number.isInteger(value) || value < 1) throw new Error(`Invalid ${name}`)
+  return value
 }
-const trustProxy = env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true'
-const key = env.NAKAMA_ENCRYPTION_KEY || 'defaultencryptionkey'
-// Behind the proxy is production: there, Nakama's default key (or none) would let anyone sign a session.
-if (trustProxy && key === 'defaultencryptionkey') refuse('NAKAMA_ENCRYPTION_KEY is unset or Nakama’s default, and TRUST_PROXY says this is production')
-const settings = { port: whole('PORT', 7360, 0), maxRooms: whole('MAX_ROOMS', 12, 1), lag: whole('NET_LAG_MS', 0, 0), jitter: whole('NET_JITTER_MS', 0, 0) }
-
+const matchId = required('MM_MATCH_ID')
+const token = required('MM_SERVER_TOKEN')
+const lifecycle = new RoomsLifecycle(required('MM_URL').replace(/\/$/, ''), matchId, token)
+const port = number('PORT', 7360)
+const initialIdleSeconds = number('IDLE_SHUTDOWN_SECONDS', 120)
+const emptyIdleSeconds = number('IDLE_SHUTDOWN_SECONDS', 30)
+const maxSeconds = number('MAX_SESSION_SECONDS', 1200)
+if (port > 65535) throw new Error('Invalid PORT')
+const origins = required('ALLOWED_ORIGINS').split(',').map((s) => s.trim()).filter(Boolean)
+if (!origins.length || origins.includes('*')) throw new Error('Explicit ALLOWED_ORIGINS required')
+const departed = new Set<string>()
+let stopping = false
+let lastOccupied = Date.now()
+let hadPlayers = false
 await initPhysics()
-for (const id of Object.keys(MAPS) as MapId[]) arenaData(id)
-
+arenaData('scrapyard')
 const server = createGameServer({
-  port: settings.port,
-  key,
-  origins: list(env.ALLOWED_ORIGINS, ['http://localhost:*', 'http://127.0.0.1:*', 'https://localhost:*', 'https://127.0.0.1:*']),
-  maxRooms: settings.maxRooms,
-  trustProxy,
-  strict: trustProxy,
-  lag: settings.lag,
-  jitter: settings.jitter,
+  port, key: token, origins, maxRooms: 1, strict: true, trustProxy: env.TRUST_PROXY === '1',
+  authenticate: (value) => {
+    const identity = verifyRoomsToken(value, token, matchId)
+    return identity && !departed.has(identity.uid) ? identity : null
+  },
+  managed: { id: matchId, mode: 'ffa', map: 'scrapyard', onComplete: () => queueMicrotask(() => void stop('match_complete')) },
+  onJoin: (uid) => { hadPlayers = true; lastOccupied = Date.now(); lifecycle.player(uid, 'joined') },
+  onLeave: (uid) => { departed.add(uid); lastOccupied = Date.now(); lifecycle.player(uid, 'left') },
 })
-await server.listen()
-
-for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.once(signal, () => {
-    console.log(JSON.stringify({ time: new Date().toISOString(), msg: 'stopping', signal }))
-    void server.close().then(() => process.exit(0))
-  })
+let heartbeat: NodeJS.Timeout | undefined
+let idle: NodeJS.Timeout | undefined
+let deadline: NodeJS.Timeout | undefined
+async function stop(reason: string) {
+  if (stopping) return
+  stopping = true
+  clearInterval(heartbeat); clearInterval(idle); clearTimeout(deadline)
+  await server.close()
+  try { await lifecycle.complete(reason) } catch { console.error(JSON.stringify({ msg: 'Rooms completion failed', reason })) }
+  process.exit(0)
 }
+await server.listen()
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => void stop(signal))
+try { await lifecycle.send('/ready') } catch { await stop('ready_failed') }
+let heartbeating = false
+heartbeat = setInterval(() => {
+  if (heartbeating || stopping) return
+  heartbeating = true
+  void lifecycle.send('/heartbeat').catch(() => stop('heartbeat_failed')).finally(() => { heartbeating = false })
+}, 30_000)
+idle = setInterval(() => {
+  if (server.lobby.humans()) lastOccupied = Date.now()
+  else if (Date.now() - lastOccupied > (hadPlayers ? emptyIdleSeconds : initialIdleSeconds) * 1000) void stop('empty')
+}, 1000)
+deadline = setTimeout(() => void stop('time_limit'), maxSeconds * 1000)

@@ -31,7 +31,7 @@ export interface Hello {
   t: 'hello'
   v: number // PROTOCOL
   build: string // BUILD ('' when a page sent none, or nonsense: no match for any server)
-  token: string // the Nakama session token (who is playing)
+  token: string // Rooms match-specific playerToken in the Gameye deployment
   guest: boolean // shown as a guest (cosmetic)
   // A seat at once, in a room of this mode on this arena (the checks, the load
   // tool, the deploy's smoke test); the lobby checks both against the

@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",
-    "@heroiclabs/nakama-js": "^2.8.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.186.0",

@@ -28,6 +28,7 @@ export interface LobbyOptions {
   arenaFor?: (map: MapId) => Arena // what a room on `map` is played on (the netplay check's test yards); the map's own otherwise
   matchmaking?: Partial<MatchmakingConfig> // the checks' shorter windows
   log?: (message: string, fields?: Record<string, unknown>) => void
+  managed?: { id: string; mode: Mode; map: MapId; onComplete: () => void }
 }
 
 // A player seated at once (a hello with a mode and an arena).
@@ -60,7 +61,7 @@ const IDLE = 60_000 // ms a session may go without a ticket before it's let go
 
 export type Lobby = ReturnType<typeof createLobby>
 
-export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, matchmaking, log = () => {} }: LobbyOptions) {
+export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, matchmaking, managed, log = () => {} }: LobbyOptions) {
   const rooms: Room[] = []
   const seated = new Map<string, { room: Room; human: Human }>() // by user id
   const searchers = new Map<string, Searcher>() // by user id
@@ -80,7 +81,7 @@ export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, match
   )
 
   function open(mode: Mode, map: MapId, build: string, hold = -1) {
-    const room = createRoom({ id: randomBytes(3).toString('hex'), mode, map, build, hold, results, arena: arenaFor?.(map), log })
+    const room = createRoom({ id: managed?.id ?? randomBytes(3).toString('hex'), mode, map, build, hold, results, arena: arenaFor?.(map), log, onComplete: managed?.onComplete })
     rooms.push(room)
     return room
   }
@@ -117,6 +118,7 @@ export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, match
     // A seat at once, in a room of the mode on the arena asked for.
     join(person: Person, now: number): Joined {
       time = now
+      if (managed && (person.mode !== managed.mode || person.map !== managed.map)) return { error: 'bad-request', text: 'Wrong playlist or arena for this match' }
       const pair = hosts(person.mode, person.map)
       if (!pair) return { error: 'bad-request', text: `No ${person.mode} on ${person.map}` }
       const before = seated.get(person.uid)
@@ -134,7 +136,7 @@ export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, match
       let room = rooms.find((r) => r.kind === mode && r.map === map && r.open())
       if (!room) {
         if (rooms.length >= maxRooms) return { error: 'full', text: 'Every room on this server is busy' }
-        room = open(mode, map, person.build)
+        room = open(mode, map, person.build, managed ? 10 * RATE.step : -1)
         log('room opened', { room: room.id, mode, map, rooms: rooms.length })
       }
       const human = room.join(person, now)
@@ -147,6 +149,7 @@ export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, match
     // older session of theirs is let go, and a ticket kept for them is theirs
     // again (they hear where it stands).
     enter(searcher: Searcher, now: number): { error: ErrorCode; text: string } | null {
+      if (managed) return { error: 'bad-request', text: 'Join through Gameye Rooms' }
       time = now
       if (seated.has(searcher.uid)) return { error: 'busy', text: 'You’re already in an online match' }
       const before = searchers.get(searcher.uid)
@@ -188,7 +191,7 @@ export function createLobby({ maxRooms, grace = 30_000, results, arenaFor, match
       }
       for (let i = rooms.length - 1; i >= 0; i--) {
         const room = rooms[i]
-        if (room.humans.length || now - room.emptySince < grace) continue
+        if (managed || room.humans.length || now - room.emptySince < grace) continue
         rooms.splice(i, 1)
         room.dispose()
         log('room closed', { room: room.id, rooms: rooms.length })

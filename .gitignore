@@ -10,3 +10,10 @@ backups/
 
 # Nakama writes its node id here at runtime
 nakama/data/.cookie
+dist/
+dist-server/
+.wrangler/
+.dev.vars*
+.gameye-rooms/
+*.tsbuildinfo
+worker-configuration.d.ts

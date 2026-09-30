@@ -1,58 +1,120 @@
-# BBMV Combat
+# Scrapyard on Gameye
 
-<p align="center">
-  <img src=".github/assets/gameplay.gif" width="480" alt="Scrapyard gameplay: a war rig with a roof minigun fighting through the streets of The City in Team Deathmatch" />
-</p>
+Guest-only integration of [Scrapyard / BBMVC](https://github.com/aasumitro/bbmvc)
+with [Gameye Rooms](https://github.com/Gameye/rooms-matchmaker) and Gameye's
+**planz-development** environment. MIT licensed; original game © A. A. Sumitro.
 
-**Scrapyard** — multiplayer car combat in the browser. Armoured cars, a roof minigun or a rocket
-pod, team deathmatch and free for all in a walled scrapyard or a burning city: practice against
-bots, or online matches found by matchmaking.
+## What runs where
 
-- **Game** (`game/`): React + Three.js + Rapier, TypeScript, Vite. The same simulation runs in
-  the browser and on the authoritative game server (`game/server/`, Node + WebSocket), with
-  client prediction, interpolation and lag-compensated hits.
-- **Accounts** (`nakama/`): [Nakama](https://heroiclabs.com/nakama/) on Postgres, run with
-  Podman — email accounts and guests.
-- **Site** (`www/`): Astro, static — home page, the guide, log in / register / account; serves
-  the game at `/play`.
-- **Server** (`deploy/`): Caddy, the game server, Nakama and Postgres in one compose file.
+- **Cloudflare client Worker**: built React/Three.js game and a WebSocket gateway.
+- **Separate Rooms Worker**: guest tickets, queue, match assignment, Gameye allocation,
+  readiness/heartbeat monitoring and session cleanup.
+- **Gameye container**: one authoritative FFA match on the Scrapyard arena, TCP 7360.
+- **GHCR**: `ghcr.io/capt-marbles/scrapyard-gameye:sha-<full-commit>`.
 
-## Run it locally
+No Nakama account, database, JWT, or signing key is required. The old `www/`,
+`nakama/`, and VM deploy scripts remain upstream reference, not the Gameye entrypoint.
+Team Deathmatch and both arenas remain available in offline practice. Online
+team assignment, parties/lobby UI and backfill are deferred; the first online
+playlist is guest FFA with 2–8 people and bots filling the remaining seats.
 
-Needs Node 24+ and Podman (with `podman compose`).
-
-```sh
-(cd game && npm ci) && (cd www && npm ci)
-cp game/.env.example game/.env.local
-cp www/.env.example www/.env
-scripts/run.sh
-```
-
-`scripts/run.sh` starts Nakama (Podman), the game server on `:7360`, the game's dev server on
-`:3000` and the site on `:8000`. The site serves the last game build at `/play`: run
-`scripts/build.sh` once to make one. Ctrl-C stops the three servers; `cd nakama && podman
-compose down` stops Nakama.
-
-The `.env.example` files point at the local Nakama with its default keys; those are fine
-locally and refused by the deploy.
-
-## Checks
+## Build and check (Node 24)
 
 ```sh
-cd game && npm run lint && npm run build && npm run check   # check: simulation, rules, bots, protocol, a real server over sockets
-cd www && npm run lint && npm run check && npm run build
-node scripts/nakama-smoke.mjs                              # against the running Nakama
+npm ci
+npm --prefix game ci
+npm run build
+npm test
+npm --prefix game run server:check
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same on every pull request.
+The managed-server test starts the actual compiled server, simulates Rooms
+lifecycle callbacks, and joins two WebSocket players using real signed match
+tokens. Other tests check expiry, cross-match refusal and gateway routing.
+The original server checks exercise simulation, arenas, prediction and sockets.
 
-## Deploy
+## Publish an image
 
-`.github/workflows/deploy.yml` builds and rolls a staging server after CI passes on `main`,
-with no stored credentials (GitHub OIDC → GCP Workload Identity Federation → OS Login over
-IAP). Its header lists the repository variables and secrets it needs; the server keeps its own
-settings in `deploy/.env` (`deploy/.env.example`).
+Push to `main` or run **Publish Gameye server** in GitHub Actions. It builds/tests
+first, then publishes a Linux AMD64 image tagged with the full Git commit.
+GitHub supplies `GITHUB_TOKEN`; no PAT is stored in this repo.
 
-## License
+After the first publication, set the GHCR package visibility to **Public** in
+GitHub package settings. A public Git repository alone does not make its package
+public. Use a unique SHA tag for each release, not a mutable `latest` tag.
 
-MIT — see `LICENSE`.
+## Gameye application (planz-development only)
+
+Create the application in the `capt-marbles` organization:
+
+| Setting | Value |
+|---|---|
+| Application name | `scrapyard-gameye` |
+| Registry | `ghcr` |
+| Repository | `ghcr.io/capt-marbles/scrapyard-gameye` (no tag) |
+| Networking | `bridge` |
+| Port | TCP container port `7360` |
+| Region | `eu-central-1` |
+| Pool | An authorized pool **with a reporting node**, e.g. the dev `production` pool |
+| Initial resource budget | 1 CPU / 1024 MiB; benchmark on the target node |
+| Tags to keep | 2 if the account permits |
+
+Register the published SHA tag, and wait for `ready`. Public pulls require
+`GHCR_ENABLED=true`; global registry credentials and package webhooks can stay off.
+Gameye pool `production` inside planz-development is not the production API.
+
+## Rooms development deployment
+
+Use the `feat/planz-development` Rooms branch prepared alongside this repo.
+It introduces `GAMEYE_ENV=planz-development`, the fixed dev API URL and the
+separate `gameye-rooms-planz-development` Worker. Do **not** retarget an existing
+sandbox or production Worker: its credentials/state belong to that environment.
+
+1. Deploy Rooms with its `--env planz-development` target and its own
+   `PLATFORM_ADMIN_TOKEN` / `ENCRYPTION_KEY`. Follow that repo's capacity-ledger
+   bootstrap while drained, then enable this environment's admissions.
+2. Onboard tenant `scrapyard-dev` through `POST /v1/tenant` with
+   `{tenantId, gameyeApiToken, config}`. Use `deployment/tenant-config.json` for
+   `config`, replacing the image tag and client origin. Supply a scoped Gameye
+   token for **planz-development**, never a production token.
+3. The token must permit the Gameye location/session operations used by Rooms.
+   Store it only in Rooms' encrypted tenant credentials, not in this game repo.
+4. In `wrangler.jsonc`, set `ROOMS_ORIGIN` to the new Rooms public HTTPS URL.
+   The `ROOMS` service binding must point at that same deployment in the same
+   Cloudflare account. `ROOMS_ORIGIN` is also the lifecycle callback origin.
+5. Run `npm run deploy:client`. Put its resulting origin in the tenant's
+   `ALLOWED_ORIGINS`. Keep `VITE_ROOMS_TENANT` aligned with the tenant slug.
+
+`MM_URL`, `MM_MATCH_ID`, and `MM_SERVER_TOKEN` are generated by Rooms for each
+allocation. Do not set static match credentials on the Gameye application.
+The browser receives only its signed, expiring match-specific player token.
+
+The browser uses `/rooms/*` for the allowlisted guest API and
+`wss://<client>/game/<roomId>?ticket=...` for gameplay. The gateway verifies live
+Rooms membership before proxying `/match` to the allocated Gameye host/port.
+It never takes an upstream address from the browser. Automatic invocation logs
+and traces are disabled because URLs carry guest credentials. The game backend
+uses plaintext WebSocket from the gateway in this dev setup; use Gameye TLS
+ingress or a trusted encrypted upstream before a production rollout.
+
+## Playtest
+
+1. Open the client in two browser windows.
+2. Choose **Free For All → Gameye Rooms** in each.
+3. The guest queue fills; after the configured deadline/countdown, Rooms starts
+   one Gameye session and waits for its readiness callback.
+4. Both players connect to the same match. Verify movement, combat and scoring.
+5. Ending the match reports completion and exits the process. An empty session
+   exits after 30 seconds (120 seconds if nobody ever joined); a 20-minute process
+   limit and Gameye's 30-minute TTL provide upper bounds.
+6. Test a new SHA image tag by updating the registered Gameye tag AND the Rooms
+   tenant's imageVersion, then redeploying the client from the same revision.
+
+Client/server build IDs must match. A page on an old revision gets a reload
+message. Connection loss ends that guest's seat; requeue for a new token rather
+than reusing a departed token. No persistent account/progression data is kept.
+
+## Upstream
+
+Source: https://github.com/aasumitro/bbmvc at `8a66c543d2800f068b3082247c72a914beb18ed3`.
+See `LICENSE` and `NOTICE`. This is an integration fork, not an upstream release.

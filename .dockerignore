@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/dist
+**/dist-server
+**/.env*
+**/.dev.vars*
+.wrangler
+.claude
+www
+nakama
+deploy

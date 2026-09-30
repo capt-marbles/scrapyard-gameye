@@ -6,7 +6,7 @@ import { Menu } from './Menu'
 import { LATEST_VERSION, PatchNotesPanel } from './PatchNotesPanel'
 import { RestoreDefaults, SettingsPanel } from './SettingsPanel'
 
-const REPO = 'https://github.com/aasumitro/bbmv' // the source, the corner's second button
+const REPO = 'https://github.com/capt-marbles/scrapyard-gameye'
 
 // The corner's buttons: the patch notes and the source, one look.
 const CORNER_BUTTON =
@@ -111,14 +111,10 @@ export function MainMenu({ onPlay, onGarage }: MainMenuProps) {
           ) : (
             <>
               <p className="font-sans text-[0.65rem] font-bold tracking-[0.25em] text-neutral-500 uppercase">Playing as</p>
-              <a href={who.guest ? '/register' : '/account'} title={who.guest ? 'Create an account to keep your name' : 'Your account'} className="mt-1 block font-display text-lg text-neutral-200 hover:text-white">
+              <span title="Guest-only Gameye development test" className="mt-1 block font-display text-lg text-neutral-200">
                 {who.name}
-              </a>
-              {who.guest && (
-                <a href="/register" className="mt-1 block font-sans text-xs text-red-400 underline decoration-red-500/50 underline-offset-4 hover:text-red-300">
-                  Create an account
-                </a>
-              )}
+              </span>
+              <p className="mt-1 text-xs text-red-400">No account required · development playtest</p>
             </>
           )}
         </div>

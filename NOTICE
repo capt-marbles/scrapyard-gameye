@@ -1,0 +1,9 @@
+Scrapyard Gameye integration
+Based on aasumitro/bbmvc (Scrapyard), copyright (c) 2026 A. A. Sumitro.
+Upstream: https://github.com/aasumitro/bbmvc
+Upstream revision: 8a66c543d2800f068b3082247c72a914beb18ed3
+Distributed under the MIT license; see LICENSE.
+
+Gameye integration changes: guest matchmaking, match admission and lifecycle,
+container packaging, and a development WebSocket gateway.
+Gameye Rooms is a separate Apache-2.0 project; it is not bundled in this repository.

@@ -1,0 +1,14 @@
+{
+  "name": "scrapyard-gameye",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix game run build && npm --prefix game run server:build",
+    "test": "node --test test/*.test.mjs",
+    "types": "wrangler types",
+    "preview": "wrangler dev",
+    "deploy:client": "npm --prefix game run build && wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "4.106.0" },
+  "engines": { "node": ">=24" }
+}

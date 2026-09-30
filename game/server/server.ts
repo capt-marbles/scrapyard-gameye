@@ -7,7 +7,7 @@ import { PHYSICS_STEP } from '../src/game/physics'
 import { createRng } from '../src/game/rng'
 import { BUILD, LIMITS, parseClient, PROTOCOL, type ErrorCode, type Hello, type ServerMessage } from '../src/net/protocol'
 import { playerName, verifyToken } from './auth'
-import { createLobby, type Searcher } from './lobby'
+import { createLobby, type Searcher, type LobbyOptions } from './lobby'
 import type { MatchmakingConfig } from './matchmaker'
 import { queueDepth, type Human, type Room } from './room'
 
@@ -41,6 +41,10 @@ export interface ServerOptions {
   arenaFor?: (map: MapId) => Arena // the checks' test yards
   matchmaking?: Partial<MatchmakingConfig> // the checks' shorter windows
   log?: (line: Record<string, unknown>) => void
+  authenticate?: typeof verifyToken
+  managed?: LobbyOptions['managed']
+  onJoin?: (uid: string) => void
+  onLeave?: (uid: string) => void
 }
 
 const RATE = { perSecond: 120, burst: 240 } // messages; a client sends ~61 a second
@@ -63,7 +67,7 @@ export function originAllowed(origin: string | undefined, allowed: readonly stri
 export function createGameServer(options: ServerOptions) {
   const { key, origins, maxRooms, trustProxy = false, lag = 0, jitter = 0, perAddress = 8, hello: helloWait = 5000, backlog = BACKLOG, build = BUILD, strict = false } = options
   const log = (msg: string, fields: Record<string, unknown> = {}) => (options.log ?? ((line) => console.log(JSON.stringify(line))))({ time: new Date().toISOString(), msg, ...fields })
-  const lobby = createLobby({ maxRooms, grace: options.grace, results: options.results, arenaFor: options.arenaFor, matchmaking: options.matchmaking, log })
+  const lobby = createLobby({ maxRooms, grace: options.grace, results: options.results, arenaFor: options.arenaFor, matchmaking: options.matchmaking, managed: options.managed, log })
   const wobble = createRng(0x51ed) // the jitter (network conditions, not gameplay)
   const delayed = lag > 0 || jitter > 0 || !!options.stall
 
@@ -190,12 +194,13 @@ export function createGameServer(options: ServerOptions) {
       clearTimeout(deadline)
       // a page of another version or another build: it's running code this server doesn't
       if (message.v !== PROTOCOL || (message.build !== build && (strict || message.build !== 'dev'))) return fail('version', 'Game updated — reload the page')
-      const identity = verifyToken(message.token, key)
+      const identity = (options.authenticate ?? verifyToken)(message.token, key)
       if (!identity) return fail('auth', 'Your session is not valid — sign in again')
       uid = identity.uid
       const name = playerName(identity, message.guest)
       const seated = (r: Room, h: Human) => {
         ;[room, human, session] = [r, h, null]
+        options.onJoin?.(uid)
         log('joined', { uid, name: h.name, room: r.id, mode: r.kind, map: r.map, seat: h.seat, ip })
       }
       if (!message.map) {
@@ -248,6 +253,8 @@ export function createGameServer(options: ServerOptions) {
       if (!open.get(ip)) open.delete(ip)
       if (room && human) {
         lobby.leave(room, human, performance.now())
+        // A replaced socket must not report the replacement as departed.
+        if (!lobby.rooms.some((r) => r.humans.some((h) => h.uid === uid))) options.onLeave?.(uid)
         log('left', { uid, room: room.id, seat: human.seat, seconds: Math.round((performance.now() - opened) / 1000), sentKB: Math.round(bytes / 1024), repeats: human.repeats, drops: human.drops, queue: queueDepth(human) })
       } else if (session) lobby.exit(session, performance.now())
     })
@@ -301,7 +308,8 @@ export function createGameServer(options: ServerOptions) {
         ws.close(4000 + CODES.indexOf('closing'), 'closing')
       }
       lobby.dispose()
-      return new Promise<void>((resolve) => http.close(() => resolve()))
+      const deadline = setTimeout(() => { for (const ws of wss.clients) ws.terminate() }, 2000)
+      return new Promise<void>((resolve) => http.close(() => { clearTimeout(deadline); resolve() }))
     },
   }
 }

@@ -183,17 +183,17 @@ export function MapSelect({ pick, onStart, onBack }: MapSelectProps) {
           <ActionButton
             primary={online}
             icon={globe}
-            title={searching ? 'Cancel search' : 'Classic'}
+            title={searching ? 'Cancel search' : 'Gameye Rooms'}
             line={
               search.phase === 'connecting'
                 ? 'Connecting…'
                 : search.phase === 'searching'
                   ? `${search.away ? 'Reconnecting…' : `Finding players · ${waited(Math.max(0, now - search.since))}`}${search.mode !== mode ? ` · ${MODES[search.mode as Mode]?.label ?? search.mode}` : ''}`
                   : search.phase === 'idle'
-                    ? 'Find Match · Online'
+                    ? (mode === 'ffa' ? 'Guest match · planz-development' : 'FFA online only for now')
                     : 'Match found'
             }
-            note="Find people to play this mode with online: the server picks the arena, and bots on Normal take the seats nobody has. Practise while you wait"
+            note="Guest free-for-all on Scrapyard via Gameye Rooms. Bots fill empty seats; practice modes work offline."
             onClick={search.phase === 'idle' || searching ? classic : undefined}
           />
         </div>

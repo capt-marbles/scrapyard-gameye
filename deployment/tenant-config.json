@@ -1,0 +1,25 @@
+{
+  "gameImage": "scrapyard-gameye",
+  "imageVersion": "REPLACE_WITH_SHA_TAG",
+  "lifecycle": "managed",
+  "sessionTtl": "30m",
+  "ports": { "game": "tcp/7360" },
+  "serverEnv": {
+    "PORT": "7360",
+    "ALLOWED_ORIGINS": "https://REPLACE_WITH_CLIENT_HOST",
+    "MAX_SESSION_SECONDS": "1200"
+  },
+  "playlists": {
+    "ffa-scrapyard": {
+      "teamsPerMatch": 8,
+      "teamSize": 1,
+      "minPlayersToStart": 2,
+      "fillDeadlineSec": 15,
+      "countdownSec": 3,
+      "backfill": "off",
+      "onNoCapacity": "fail"
+    }
+  },
+  "lobbyEnabled": false,
+  "mockMode": false
+}

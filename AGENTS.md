@@ -2,6 +2,19 @@
 
 # Scrapyard
 
+## Gameye fork (takes precedence over upstream architecture notes below)
+
+This fork is guest-only. `game/server/main.ts` requires Rooms `MM_URL`,
+`MM_MATCH_ID`, and `MM_SERVER_TOKEN`. One session hosts one FFA Scrapyard match;
+no Nakama server/key or process-local matchmaking is used in the deployed entrypoint.
+The original Nakama/website/deployment files are retained as upstream reference,
+not part of our runtime. Preserve MIT attribution. Do not use upstream deploy scripts.
+Build with Node 24: root `npm ci`, `npm --prefix game ci`, `npm run build`;
+`npm test` tests the gateway and real managed server, `npm --prefix game run server:check`
+tests the original simulation/networking. `edge/worker.js` serves the client and
+proxies validated Rooms guest API calls and match sockets. Never log tickets or
+MM_* secrets; never put Gameye credentials into client build variables.
+
 ## Project
 
 **Scrapyard** — browser-based multiplayer 3D vehicular-combat game. Long-term vision: arcade vehicles, guns/missiles/rockets/mines, destructible vehicles, ramps/buildings/hazards, pickups, AI opponents, 4-8+ online players.

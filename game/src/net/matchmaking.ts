@@ -1,188 +1,81 @@
 import type { Loadout } from '../game/loadout'
-import { gameServerUrl, link, NetError, openSocket, REASONS, reasonFor, sayHello, type Link } from './connection'
-import type { Queue, Queueing, QueueNote, ServerMessage } from './protocol'
-import { freshSession } from './session'
-
-// Classic's matchmaking as the page sees it: one store every screen reads
-// (the arena screen's Classic button, the match-found overlay over whatever
-// shows, a practice match included), mirroring what the game server's
-// matcher says (server/matchmaker.ts) and never ahead of it. It owns the
-// socket from Find Match on: a hello with the player's session and no map
-// (a matchmaking session), then the search; the server's word on the ticket
-// comes back whole each time it changes. The seat comes as a welcome on the
-// same socket, which becomes the match's link (connection.ts) for the
-// runtime to take (takeSeat). A socket that drops with a ticket out is
-// opened again within the server's grace, where the ticket waits; so is one
-// a reload cut off (the tab remembers it had a ticket out: resumeSearch). No
-// ticket, no socket. DOM-free, but for that one sessionStorage entry.
+import { join, openSocket, type Link } from './connection'
+import { gameSocketUrl, roomSnapshot, roomsRequest, type Admission, type Ticket } from './rooms'
 
 export type Search =
-  | { phase: 'idle'; note: string } // note: how the last search ended, in the player's words ('' none)
+  | { phase: 'idle'; note: string }
   | { phase: 'connecting'; mode: string }
-  | { phase: 'searching'; mode: string; since: number; note: string; away: '' | 'dropped' | 'reloaded' } // since: performance.now() at the ticket's start; away: why the socket is being opened again ('' it's open)
-  | { phase: 'found' | 'accepted'; mode: string; id: string; map: string; players: number; size: number; accepted: number; declined: number; deadline: number; of: number; answered: boolean } // deadline: performance.now(); answered: sent, not yet confirmed
+  | { phase: 'searching'; mode: string; since: number; note: string; away: '' | 'dropped' }
   | { phase: 'seated'; link: Link }
-
-export const NOTES: Record<QueueNote, string> = {
-  cancelled: 'Search cancelled',
-  declined: 'You declined the match',
-  missed: 'You didn’t accept in time',
-  gone: 'Your search timed out',
-  short: 'Not everyone accepted — back in the queue, your place kept',
-  full: 'No room free on the server — back in the queue, your place kept',
-}
-const RETRY = [0, 1000, 2000, 4000, 7000] // ms before each try to get the socket back: the server keeps a ticket 15 s
-const NOTE = 5000 // ms a note is said for
-const MARK = 'scrapyard.search' // sessionStorage, per tab: a ticket is out, in this mode
-
 let state: Search = { phase: 'idle', note: '' }
 const listeners = new Set<() => void>()
-let socket: WebSocket | null = null
-let gear: Loadout | null = null // the gun the seat is fitted with
-let attempt = 0 // each Find Match and each try to come back: a stale one lets its socket go
-
-function set(next: Search) {
-  state = next
-  try {
-    if (next.phase === 'idle' || next.phase === 'seated') sessionStorage.removeItem(MARK)
-    else sessionStorage.setItem(MARK, next.mode)
-  } catch {} // no storage: a reload just starts over (the ticket ends with its grace)
-  for (const listener of listeners) listener()
-  if ('note' in next && next.note) setTimeout(() => state === next && set({ ...next, note: '' }), NOTE) // said, then gone
-}
-
+let attempt = 0
+let cleanup: (() => Promise<void>) | null = null
+const tenantId = import.meta.env.VITE_ROOMS_TENANT || 'scrapyard-dev'
+const playlist = 'ffa-scrapyard'
 export const currentSearch = () => state
-export function onSearch(listener: () => void) {
-  listeners.add(listener)
-  return () => void listeners.delete(listener)
-}
+export function onSearch(fn: () => void) { listeners.add(fn); return () => void listeners.delete(fn) }
+function set(next: Search) { state = next; for (const fn of listeners) fn() }
+// A reload starts a fresh guest; existing allocations expire through managed lifecycle.
+export function resumeSearch(_loadout: Loadout) {}
 
-function send(message: Pick<Queueing, 't' | 'do'> & Partial<Queueing>) {
-  if (socket?.readyState === socket?.OPEN) socket?.send(JSON.stringify(message))
-}
-
-// Signs in, opens a socket and says hello: a matchmaking session. Rejects
-// with the player's reason.
-async function connect(loadout: Loadout) {
-  const { token, guest } = await freshSession().catch(() => Promise.reject(new NetError(REASONS.offline)))
-  const open = await openSocket(gameServerUrl())
-  sayHello(open, { token, guest, loadout })
-  open.onmessage = (e) => hear(open, JSON.parse(String(e.data)) as ServerMessage)
-  open.onclose = () => dropped(open)
-  return open
-}
-
-function hear(from: WebSocket, message: ServerMessage) {
-  if (from !== socket) return
-  if (message.t === 'mm') return mirror(message)
-  if (message.t === 'welcome') {
-    socket = null // the match's now
-    return set({ phase: 'seated', link: link(from, message) })
-  }
-  if (message.t === 'err') {
-    socket = null // the server closes it
-    set({ phase: 'idle', note: reasonFor(message.code, message.text) })
-  }
-}
-
-// The server's word on the ticket, as the page keeps it (its times on the page's clock).
-function mirror(q: Queue) {
-  const now = performance.now()
-  if (q.state === 'idle') {
-    const lost = state.phase === 'searching' && state.away === 'dropped' // came back to find it gone
-    close()
-    return set({ phase: 'idle', note: q.note ? NOTES[q.note] : lost ? REASONS.lost : '' })
-  }
-  if (q.state === 'searching') return set({ phase: 'searching', mode: q.mode, since: now - q.waited, note: q.note ? NOTES[q.note] : '', away: '' })
-  set({ phase: q.state, mode: q.mode, id: q.id, map: q.map, players: q.players, size: q.size, accepted: q.accepted, declined: q.declined, deadline: now + q.left, of: q.of, answered: false })
-}
-
-// No ticket: nothing to keep the socket for.
-function close() {
-  const open = socket
-  socket = null
-  if (open?.readyState === open?.OPEN) open?.send('{"t":"bye"}')
-  open?.close()
-}
-
-// The socket went with a ticket out: back within the server's grace. A ready
-// check it was in is lost (the server counts it a decline).
-function dropped(from: WebSocket) {
-  if (from !== socket) return
-  socket = null
-  if (state.phase === 'idle' || state.phase === 'seated') return
-  set({ phase: 'searching', mode: state.mode, since: state.phase === 'searching' ? state.since : performance.now(), note: '', away: 'dropped' })
-  void comeBack(++attempt, 0)
-}
-
-async function comeBack(mine: number, tries: number) {
-  await new Promise((resolve) => setTimeout(resolve, RETRY[tries]))
-  const away = () => mine === attempt && state.phase === 'searching' && state.away
-  if (!away() || !gear) return
-  try {
-    const open = await connect(gear)
-    if (!away()) return open.close()
-    socket = open
-    send({ t: 'mm', do: 'state' })
-  } catch {
-    if (!away()) return
-    if (tries + 1 < RETRY.length) return comeBack(mine, tries + 1)
-    set({ phase: 'idle', note: REASONS.lost })
-  }
-}
-
-// A reload with a ticket out in this tab: its socket again, and the server's
-// word on the ticket — searching where it was, or nothing. Once, as the menu shows.
-export function resumeSearch(loadout: Loadout) {
-  let mode: string | null = null
-  try {
-    mode = sessionStorage.getItem(MARK)
-  } catch {}
-  if (!mode || state.phase !== 'idle') return
-  gear = loadout
-  set({ phase: 'searching', mode, since: performance.now(), note: '', away: 'reloaded' })
-  void comeBack(++attempt, 0)
-}
-
-// Find Match: a ticket for `mode`, from idle.
 export async function findMatch(mode: string, loadout: Loadout) {
   if (state.phase !== 'idle') return
+  if (mode !== 'ffa') { set({ phase: 'idle', note: 'Online dev test: Free For All. Team Deathmatch is available in Practice.' }); return }
   const mine = ++attempt
-  gear = loadout
   set({ phase: 'connecting', mode })
+  let release: (() => Promise<void>) | null = null
   try {
-    const open = await connect(loadout)
-    if (mine !== attempt) return open.close() // cancelled meanwhile
-    socket = open
-    send({ t: 'mm', do: 'search', mode })
+    const ticket = await roomsRequest<Ticket>('/v1/tickets', 'POST', { tenantId })
+    if (mine !== attempt) return
+    const admission = await roomsRequest<Admission>('/v1/queue', 'POST', { ticket: ticket.ticket, playlist })
+    let roomId = admission.roomId
+    release = async () => {
+      if (roomId) await roomsRequest(`/v1/rooms/${roomId}/leave`, 'POST', { ticket: ticket.ticket })
+      else await roomsRequest(`/v1/queue/${encodeURIComponent(admission.queueId)}`, 'DELETE')
+    }
+    if (mine !== attempt) { await release().catch(() => undefined); return }
+    cleanup = release
+    const since = performance.now()
+    while (mine === attempt) {
+      if (performance.now() - since > 180_000) throw new Error('No ready server after three minutes. Please retry.')
+      if (!roomId) {
+        const queue = await roomsRequest<Admission>(`/v1/queue/${encodeURIComponent(admission.queueId)}`)
+        roomId = queue.roomId
+      }
+      if (roomId) {
+        const snapshot = await roomSnapshot(roomId, ticket.ticket)
+        if (mine !== attempt) return
+        if (snapshot.state === 'closed') throw new Error(`Match closed: ${snapshot.closedReason || 'please retry'}`)
+        if (snapshot.state === 'live' && snapshot.playerToken && snapshot.server) {
+          const socket = await openSocket(gameSocketUrl(roomId, ticket.ticket))
+          if (mine !== attempt) { socket.close(); return }
+          const link = await join(socket, { token: snapshot.playerToken, guest: true, mode: 'ffa', map: 'scrapyard', loadout })
+          if (mine !== attempt) { link.close(); return }
+          cleanup = null
+          set({ phase: 'seated', link })
+          return
+        }
+        set({ phase: 'searching', mode, since, away: '', note: `${snapshot.state} · ${snapshot.members.length}/8 players` })
+      } else set({ phase: 'searching', mode, since, away: '', note: 'Waiting for players' })
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
   } catch (error) {
-    if (mine === attempt) set({ phase: 'idle', note: error instanceof NetError ? error.message : REASONS.unreachable })
+    await release?.().catch(() => undefined)
+    if (mine === attempt) { cleanup = null; set({ phase: 'idle', note: error instanceof Error ? error.message : 'Unable to join' }) }
   }
 }
 
-// Cancel Search: the server ends the ticket and says so. Still connecting,
-// or with the socket away, the page just stops (a ticket left on the server
-// ends with its grace).
 export function cancelSearch() {
-  if (state.phase === 'connecting' || (state.phase === 'searching' && !socket)) {
-    attempt++
-    close()
-    return set({ phase: 'idle', note: NOTES.cancelled })
-  }
-  if (state.phase === 'searching') send({ t: 'mm', do: 'cancel' })
+  attempt++
+  const release = cleanup
+  cleanup = null
+  void release?.().catch(() => undefined)
+  set({ phase: 'idle', note: 'Search cancelled' })
 }
-
-// The ready check: an answer goes to the server, whose word decides.
-export function answer(accept: boolean) {
-  if ((state.phase !== 'found' && state.phase !== 'accepted') || (accept && state.phase === 'accepted')) return
-  send({ t: 'mm', do: accept ? 'accept' : 'decline', id: state.id })
-  set({ ...state, answered: true })
-}
-
-// The seat, once: the runtime plays the match on it.
 export function takeSeat(): Link | null {
   if (state.phase !== 'seated') return null
-  const seat = state.link
+  const link = state.link
   set({ phase: 'idle', note: '' })
-  return seat
+  return link
 }

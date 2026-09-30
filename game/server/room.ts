@@ -89,11 +89,12 @@ export interface RoomOptions {
   results?: number // seconds the results stay up before the next match
   arena?: Arena // played on instead of the map's own (the netplay check's test yard)
   log?: (message: string, fields: Record<string, unknown>) => void
+  onComplete?: () => void // managed mode: complete once instead of cycling into another match
 }
 
 export type Room = ReturnType<typeof createRoom>
 
-export function createRoom({ id, mode: kind, map, build = '', hold = -1, seed: first, results = 15, arena = arenaData(map), log = () => {} }: RoomOptions) {
+export function createRoom({ id, mode: kind, map, build = '', hold = -1, seed: first, results = 15, arena = arenaData(map), log = () => {}, onComplete }: RoomOptions) {
   let seed = first ?? freshSeed()
   const digest = arenaDigest(arena)
   const world = createWorld(arena.colliders)
@@ -121,6 +122,7 @@ export function createRoom({ id, mode: kind, map, build = '', hold = -1, seed: f
     },
   })
   let next = -1 // the tick the next match starts at, once this one is over
+  let completed = false
   const full = mode.rules.remaining() // seconds on a match's clock
   let changed = true // the rules had events since the state last went out
   let sharedAt = -Infinity
@@ -151,7 +153,10 @@ export function createRoom({ id, mode: kind, map, build = '', hold = -1, seed: f
     mode.report() // drains the rules' events; each browser announces them for its own player
     if (live) {
       if (mode.outcome() !== undefined) finish()
-    } else if (tick >= next) restart()
+    } else if (tick >= next && !completed) {
+      if (onComplete) { completed = true; onComplete() }
+      else restart()
+    }
     if (tick % (RATE.step / RATE.snap) === 0) broadcast()
     for (const human of humans) if (now - human.heardAt > IDLE) human.close('idle', 'No input for a minute')
   }

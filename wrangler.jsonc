@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "scrapyard-gameye-dev",
+  "main": "edge/worker.js",
+  "compatibility_date": "2026-09-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./game/dist", "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/rooms/*", "/game/*"]
+  },
+  "services": [{ "binding": "ROOMS", "service": "gameye-rooms-planz-development" }],
+  "vars": {
+    "ROOMS_ORIGIN": "https://gameye-rooms-planz-development.REPLACE.workers.dev",
+    "ROOMS_TENANT": "scrapyard-dev"
+  },
+  "limits": { "cpu_ms": 50 },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  }
+}
