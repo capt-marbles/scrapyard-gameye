@@ -1,12 +1,12 @@
 {
   "gameImage": "scrapyard-gameye",
-  "imageVersion": "REPLACE_WITH_SHA_TAG",
+  "imageVersion": "sha-9d96af15d05ef313caa7f252ecb83e240cb2d884",
   "lifecycle": "managed",
   "sessionTtl": "30m",
   "ports": { "game": "tcp/7360" },
   "serverEnv": {
     "PORT": "7360",
-    "ALLOWED_ORIGINS": "https://REPLACE_WITH_CLIENT_HOST",
+    "ALLOWED_ORIGINS": "https://scrapyard-gameye-dev.andrew-48d.workers.dev",
     "MAX_SESSION_SECONDS": "1200"
   },
   "playlists": {

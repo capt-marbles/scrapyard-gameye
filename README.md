@@ -4,6 +4,13 @@ Guest-only integration of [Scrapyard / BBMVC](https://github.com/aasumitro/bbmvc
 with [Gameye Rooms](https://github.com/Gameye/rooms-matchmaker) and Gameye's
 **planz-development** environment. MIT licensed; original game © A. A. Sumitro.
 
+**Live dev:** https://scrapyard-gameye-dev.andrew-48d.workers.dev
+
+Choose **Play → Free For All → Gameye Rooms** in two browser windows. The
+current tenant is `scrapyard-dev` and uses the SHA tag in
+`deployment/tenant-config.json`. The Rooms API is
+https://gameye-rooms-planz-development.andrew-48d.workers.dev.
+
 ## What runs where
 
 - **Cloudflare client Worker**: built React/Three.js game and a WebSocket gateway.
@@ -96,6 +103,10 @@ It never takes an upstream address from the browser. Automatic invocation logs
 and traces are disabled because URLs carry guest credentials. The game backend
 uses plaintext WebSocket from the gateway in this dev setup; use Gameye TLS
 ingress or a trusted encrypted upstream before a production rollout.
+Cloudflare refuses bare-IP HTTP origins; this dev deployment uses the
+operator-configured `GAMEYE_IPV4_DNS_SUFFIX=sslip.io` to resolve only the
+Gameye-allocated IPv4. This is a public wildcard-DNS dependency; a Gameye-owned
+equivalent can replace it without modifying the game server.
 
 ## Playtest
 
@@ -107,12 +118,47 @@ ingress or a trusted encrypted upstream before a production rollout.
 5. Ending the match reports completion and exits the process. An empty session
    exits after 30 seconds (120 seconds if nobody ever joined); a 20-minute process
    limit and Gameye's 30-minute TTL provide upper bounds.
-6. Test a new SHA image tag by updating the registered Gameye tag AND the Rooms
-   tenant's imageVersion, then redeploying the client from the same revision.
+6. For a new gameplay revision, publish and preload its SHA tag. Rooms currently
+   has no general tenant-config update API: use a new test tenant slug such as
+   `scrapyard-dev-r2` with that `imageVersion`, then set `ROOMS_TENANT` in Wrangler
+   and `VITE_ROOMS_TENANT` when building the client from the same game revision.
 
 Client/server build IDs must match. A page on an old revision gets a reload
 message. Connection loss ends that guest's seat; requeue for a new token rather
 than reusing a departed token. No persistent account/progression data is kept.
+
+## Coding-agent operations
+
+The development account/URLs are pinned in `wrangler.jsonc`. The Rooms checkout
+must use the companion `feat/planz-development` branch; its current dev capacity
+ledger is already sealed and admissions are enabled. For a NEW environment,
+start drained and bootstrap before enabling admissions.
+
+The operator helper uses `.gameye-rooms/development-operator.json` (ignored,
+mode 0600). Back it up securely; it contains deployment credentials and must
+never be committed or copied into prompts/logs. Tenant credentials are saved
+alongside it. `gameye-token` creates a dev-organization token with only
+`regions:read`, `session:start`, `session:read`, and `session:stop`.
+
+```sh
+export ROOMS_CHECKOUT=/path/to/rooms-checkout
+export ROOMS_ORIGIN=https://gameye-rooms-planz-development.andrew-48d.workers.dev
+node scripts/operator-development.mjs status
+# First-time setup only:
+# node scripts/operator-development.mjs secrets
+# node scripts/operator-development.mjs bootstrap
+# GAMEYE_USER_ID=<dev-user-uuid> node scripts/operator-development.mjs gameye-token
+# node scripts/operator-development.mjs onboard
+
+# Allocates one real dev session for two guests, then disconnects them:
+node scripts/live-smoke.mjs
+# Optional real Chrome test (requires Playwright installed):
+node scripts/browser-smoke.mjs
+```
+
+The browser check clicks through the deployed UI, verifies distinct seats in
+the same match, receives live snapshots, and sends movement input. Both smoke
+checks close their connections; managed idle shutdown then stops the session.
 
 ## Upstream
 

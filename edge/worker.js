@@ -22,7 +22,7 @@ export async function readJsonBounded(response, limit = 65536) {
 }
 
 /**
- * @param {Pick<Env, 'ROOMS' | 'ROOMS_ORIGIN' | 'ROOMS_TENANT'>} env
+ * @param {Pick<Env, 'ROOMS' | 'ROOMS_ORIGIN' | 'ROOMS_TENANT'> & { GAMEYE_IPV4_DNS_SUFFIX?: string }} env
  * @param {string} roomId
  * @param {string} ticket
  */
@@ -35,7 +35,14 @@ export async function gameTarget(env, roomId, ticket) {
   const host = room.server?.host
   const port = room.server?.ports?.game
   if (typeof host !== 'string' || !/^[a-z0-9.-]+$/i.test(host) || !Number.isInteger(port) || port < 1 || port > 65535) return null
-  return `http://${host}:${port}/match`
+  // Cloudflare fetch rejects bare-IP origins. The development wildcard DNS
+  // maps the provider-allocated IPv4 to a hostname; callers cannot set it.
+  let hostname = host
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) && env.GAMEYE_IPV4_DNS_SUFFIX) {
+    if (host.split('.').some((p) => Number(p) > 255) || !/^[a-z0-9.-]+$/i.test(env.GAMEYE_IPV4_DNS_SUFFIX)) return null
+    hostname = `${host}.${env.GAMEYE_IPV4_DNS_SUFFIX}`
+  }
+  return `http://${hostname}:${port}/match`
 }
 
 /** @type {ExportedHandler<Env>} */
@@ -72,7 +79,11 @@ export default {
         if (!target) return new Response('Match unavailable', { status: 403 })
         const headers = new Headers({ Upgrade: 'websocket', Origin: url.origin })
         const response = await fetch(target, { headers, redirect: 'manual' })
-        if (response.status !== 101) { await response.body?.cancel(); return new Response('Game server unavailable', { status: 502 }) }
+        if (response.status !== 101) {
+          console.error(JSON.stringify({ event: 'game_upstream_refused', status: response.status }))
+          await response.body?.cancel()
+          return new Response('Game server unavailable', { status: 502, headers: { 'x-game-upstream-status': String(response.status) } })
+        }
         // Pass through the upgrade without accepting/re-emitting game messages.
         return response
       }

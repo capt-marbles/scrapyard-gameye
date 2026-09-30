@@ -20,3 +20,7 @@ test('proxy does not expose operator or lifecycle endpoints', async () => {
 test('JSON decoding is bounded', async () => {
   await assert.rejects(readJsonBounded(new Response('a'.repeat(100)), 10))
 })
+test('uses operator-configured DNS for allocated IPv4 origins', async () => {
+  const ipEnv = { ...env, GAMEYE_IPV4_DNS_SUFFIX: 'sslip.io', ROOMS: { fetch: async () => Response.json({ roomId, state: 'live', playerToken: 'signed', server: { host: '51.195.60.60', ports: { game: 32123 } } }) } }
+  assert.equal(await gameTarget(ipEnv, roomId, 'v2.scrapyard-dev.ticket'), 'http://51.195.60.60.sslip.io:32123/match')
+})

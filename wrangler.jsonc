@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "scrapyard-gameye-dev",
+  "account_id": "48da264b5fa2dc22dc36051e36296f33",
   "main": "edge/worker.js",
   "compatibility_date": "2026-09-26",
   "compatibility_flags": ["nodejs_compat"],
@@ -11,8 +12,9 @@
   },
   "services": [{ "binding": "ROOMS", "service": "gameye-rooms-planz-development" }],
   "vars": {
-    "ROOMS_ORIGIN": "https://gameye-rooms-planz-development.REPLACE.workers.dev",
-    "ROOMS_TENANT": "scrapyard-dev"
+    "ROOMS_ORIGIN": "https://gameye-rooms-planz-development.andrew-48d.workers.dev",
+    "ROOMS_TENANT": "scrapyard-dev",
+    "GAMEYE_IPV4_DNS_SUFFIX": "sslip.io"
   },
   "limits": { "cpu_ms": 50 },
   "observability": {
