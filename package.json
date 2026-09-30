@@ -9,6 +9,6 @@
     "preview": "wrangler dev",
     "deploy:client": "npm --prefix game run build && wrangler deploy"
   },
-  "devDependencies": { "wrangler": "4.106.0" },
+  "devDependencies": { "wrangler": "4.144.0", "miniflare": "5.20260926.1-alpha" },
   "engines": { "node": ">=24" }
 }

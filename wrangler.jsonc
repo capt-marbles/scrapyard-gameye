@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "scrapyard-gameye-dev",
   "main": "edge/worker.js",
-  "compatibility_date": "2026-09-29",
+  "compatibility_date": "2026-09-26",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./game/dist", "binding": "ASSETS",

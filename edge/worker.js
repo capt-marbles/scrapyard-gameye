@@ -1,5 +1,6 @@
 // TLS termination for the browser. Rooms authenticates membership and supplies
 // the destination; clients can never select an arbitrary upstream host/port.
+/** @param {Response | Request} response */
 export async function readJsonBounded(response, limit = 65536) {
   if (!response.body) throw new Error('Missing body')
   const reader = response.body.getReader()
@@ -20,6 +21,11 @@ export async function readJsonBounded(response, limit = 65536) {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
+/**
+ * @param {Pick<Env, 'ROOMS' | 'ROOMS_ORIGIN' | 'ROOMS_TENANT'>} env
+ * @param {string} roomId
+ * @param {string} ticket
+ */
 export async function gameTarget(env, roomId, ticket) {
   if (!/^[a-f0-9]{64}$/.test(roomId) || !ticket.startsWith(`v2.${env.ROOMS_TENANT}.`) || ticket.length > 16384) return null
   const response = await env.ROOMS.fetch(new Request(`${env.ROOMS_ORIGIN}/v1/rooms/${roomId}?ticket=${encodeURIComponent(ticket)}`))
@@ -48,13 +54,14 @@ export default {
         const headers = new Headers({ 'content-type': 'application/json' })
         const ip = request.headers.get('CF-Connecting-IP')
         if (ip) headers.set('CF-Connecting-IP', ip)
+        /** @type {BodyInit | null} */
         let body = request.body
         if (path === '/v1/tickets') {
           const input = await readJsonBounded(request, 8192)
           if (input.tenantId !== env.ROOMS_TENANT) return new Response('Unknown tenant', { status: 400 })
           body = JSON.stringify(input)
         }
-        const response = await env.ROOMS.fetch(new Request(`${env.ROOMS_ORIGIN}${path}${url.search}`, { method: request.method, headers, body, redirect: 'error' }))
+        const response = await env.ROOMS.fetch(new Request(`${env.ROOMS_ORIGIN}${path}${url.search}`, { method: request.method, headers, body, redirect: 'manual' }))
         return new Response(response.body, { status: response.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
       }
       const game = url.pathname.match(/^\/game\/([a-f0-9]{64})$/)
@@ -64,7 +71,8 @@ export default {
         const target = await gameTarget(env, game[1], url.searchParams.get('ticket') || '')
         if (!target) return new Response('Match unavailable', { status: 403 })
         const headers = new Headers({ Upgrade: 'websocket', Origin: url.origin })
-        const response = await fetch(target, { headers, redirect: 'error' })
+        const response = await fetch(target, { headers, redirect: 'manual' })
+        if (response.status !== 101) { await response.body?.cancel(); return new Response('Game server unavailable', { status: 502 }) }
         // Pass through the upgrade without accepting/re-emitting game messages.
         return response
       }
