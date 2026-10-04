@@ -24,3 +24,18 @@ test('uses operator-configured DNS for allocated IPv4 origins', async () => {
   const ipEnv = { ...env, GAMEYE_IPV4_DNS_SUFFIX: 'sslip.io', ROOMS: { fetch: async () => Response.json({ roomId, state: 'live', playerToken: 'signed', server: { host: '51.195.60.60', ports: { game: 32123 } } }) } }
   assert.equal(await gameTarget(ipEnv, roomId, 'v2.scrapyard-dev.ticket'), 'http://51.195.60.60.sslip.io:32123/match')
 })
+test('without a service binding, Rooms is reached over its public origin', async () => {
+  const seen = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (request) => {
+    seen.push(request.url)
+    return Response.json({ roomId, state: 'live', playerToken: 'signed', server: { host: 'game.example', ports: { game: 32123 } } })
+  }
+  try {
+    const { ROOMS, ...noBinding } = env
+    assert.equal(await gameTarget(noBinding, roomId, 'v2.scrapyard-dev.ticket'), 'http://game.example:32123/match')
+    assert.deepEqual(seen, [`https://rooms.example/v1/rooms/${roomId}?ticket=v2.scrapyard-dev.ticket`])
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
