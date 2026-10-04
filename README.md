@@ -123,9 +123,9 @@ equivalent can replace it without modifying the game server.
    limit and Gameye's 30-minute TTL provide upper bounds.
 6. For a new gameplay revision, publish its SHA tag (merging to `main` does
    this), then move the tenant to it in place:
-   `PATCH /v1/tenant/scrapyard-dev {"imageVersion": "sha-<full-commit>", "enableTag": true}`
-   with the platform token. Rooms answers 409 until Gameye has pulled the tag;
-   retry until it succeeds. Build the client from the same game revision.
+   `node scripts/operator-development.mjs set-image sha-<full-commit>` (a
+   `PATCH /v1/tenant/scrapyard-dev` with the platform token; Rooms answers 409
+   until Gameye has pulled the tag, and the helper retries). Build the client from the same game revision.
 
 Client/server build IDs must match. A page on an old revision gets a reload
 message. Connection loss ends that guest's seat; requeue for a new token rather
@@ -135,12 +135,11 @@ than reusing a departed token. No persistent account/progression data is kept.
 
 The development account/URLs are pinned in `wrangler.jsonc`.
 
-`scripts/operator-development.mjs` was written for the retired
-`gameye-rooms-planz-development` Worker: it only accepts that origin, and its
-`secrets` and `bootstrap` commands run Wrangler against it. It does not work
-against the OVH matchmaker; tenant operations there go through the Rooms API
-with the platform token (see the Rooms runbook). The smoke scripts below go
-through this game's own gateway and still work.
+`scripts/operator-development.mjs` talks to the OVH matchmaker at the
+`ROOMS_ORIGIN` pinned in `wrangler.jsonc` (override with `ROOMS_ORIGIN`). Its
+platform calls are allowlisted to the operator's address on the Rooms server.
+The server provisions its own secrets and capacity ledger, so the old `secrets`
+and `bootstrap` commands are gone.
 
 The operator helper uses `.gameye-rooms/development-operator.json` (ignored,
 mode 0600). Back it up securely; it contains deployment credentials and must
@@ -149,6 +148,15 @@ alongside it. `gameye-token` creates a dev-organization token with only
 `regions:read`, `session:start`, `session:read`, and `session:stop`.
 
 ```sh
+# Store the Rooms platform token (from the operator; stdin only, never argv):
+node scripts/operator-development.mjs token < /path/to/platform-token
+node scripts/operator-development.mjs status
+# Move the tenant to a published image tag (enables the tag, retries until Gameye has it):
+node scripts/operator-development.mjs set-image sha-<full-commit>
+# First-time setup only:
+# GAMEYE_USER_ID=<dev-user-uuid> node scripts/operator-development.mjs gameye-token
+# node scripts/operator-development.mjs onboard
+
 # Allocates one real dev session for two guests, then disconnects them:
 node scripts/live-smoke.mjs
 # Optional real Chrome test (requires Playwright installed):
