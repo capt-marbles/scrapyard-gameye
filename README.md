@@ -9,13 +9,13 @@ with [Gameye Rooms](https://github.com/Gameye/rooms-matchmaker) and Gameye's
 Choose **Play → Free For All → Gameye Rooms** in two browser windows. The
 current tenant is `scrapyard-dev` and uses the SHA tag in
 `deployment/tenant-config.json`. The Rooms API is
-https://gameye-rooms-planz-development.andrew-48d.workers.dev.
+https://137-74-108-96.sslip.io (the native gameye-rooms matchmaker on OVH).
 
 ## What runs where
 
 - **Cloudflare client Worker**: built React/Three.js game and a WebSocket gateway.
-- **Separate Rooms Worker**: guest tickets, queue, match assignment, Gameye allocation,
-  readiness/heartbeat monitoring and session cleanup.
+- **Gameye Rooms (native, on OVH)**: guest tickets, queue, match assignment, Gameye
+  allocation, readiness/heartbeat monitoring and session cleanup.
 - **Gameye container**: one authoritative FFA match on the Scrapyard arena, TCP 7360.
 - **GHCR**: `ghcr.io/capt-marbles/scrapyard-gameye:sha-<full-commit>`.
 
@@ -72,23 +72,26 @@ Gameye pool `production` inside planz-development is not the production API.
 
 ## Rooms development deployment
 
-Use the `feat/planz-development` Rooms branch prepared alongside this repo.
-It introduces `GAMEYE_ENV=planz-development`, the fixed dev API URL and the
-separate `gameye-rooms-planz-development` Worker. Do **not** retarget an existing
-sandbox or production Worker: its credentials/state belong to that environment.
+Rooms runs as the native Node matchmaker from Gameye/rooms-matchmaker (`server/`
+on the `feat/planz-development` branch), on one OVH server at
+https://137-74-108-96.sslip.io against Gameye planz-development. Its operations
+(deploy, restart, restore, capacity ledger) are in that repo's
+`docs/ovh-native-runbook.md`.
 
-1. Deploy Rooms with its `--env planz-development` target and its own
-   `PLATFORM_ADMIN_TOKEN` / `ENCRYPTION_KEY`. Follow that repo's capacity-ledger
-   bootstrap while drained, then enable this environment's admissions.
+The Cloudflare `gameye-rooms-planz-development` Worker this game used before was
+deleted on 2026-10-04, so there is no rollback to it.
+
+1. Rooms is already deployed and its capacity ledger sealed; the platform
+   operator holds its `PLATFORM_ADMIN_TOKEN`.
 2. Onboard tenant `scrapyard-dev` through `POST /v1/tenant` with
    `{tenantId, gameyeApiToken, config}`. Use `deployment/tenant-config.json` for
    `config`, replacing the image tag and client origin. Supply a scoped Gameye
    token for **planz-development**, never a production token.
 3. The token must permit the Gameye location/session operations used by Rooms.
    Store it only in Rooms' encrypted tenant credentials, not in this game repo.
-4. In `wrangler.jsonc`, set `ROOMS_ORIGIN` to the new Rooms public HTTPS URL.
-   The `ROOMS` service binding must point at that same deployment in the same
-   Cloudflare account. `ROOMS_ORIGIN` is also the lifecycle callback origin.
+4. In `wrangler.jsonc`, `ROOMS_ORIGIN` is the Rooms public HTTPS URL. There is no
+   `ROOMS` service binding: Rooms is not a Worker, so the gateway calls it with a
+   plain fetch. `ROOMS_ORIGIN` is also the lifecycle callback origin.
 5. Run `npm run deploy:client`. Put its resulting origin in the tenant's
    `ALLOWED_ORIGINS`. Keep `VITE_ROOMS_TENANT` aligned with the tenant slug.
 
@@ -118,10 +121,11 @@ equivalent can replace it without modifying the game server.
 5. Ending the match reports completion and exits the process. An empty session
    exits after 30 seconds (120 seconds if nobody ever joined); a 20-minute process
    limit and Gameye's 30-minute TTL provide upper bounds.
-6. For a new gameplay revision, publish and preload its SHA tag. Rooms currently
-   has no general tenant-config update API: use a new test tenant slug such as
-   `scrapyard-dev-r2` with that `imageVersion`, then set `ROOMS_TENANT` in Wrangler
-   and `VITE_ROOMS_TENANT` when building the client from the same game revision.
+6. For a new gameplay revision, publish its SHA tag (merging to `main` does
+   this), then move the tenant to it in place:
+   `PATCH /v1/tenant/scrapyard-dev {"imageVersion": "sha-<full-commit>", "enableTag": true}`
+   with the platform token. Rooms answers 409 until Gameye has pulled the tag;
+   retry until it succeeds. Build the client from the same game revision.
 
 Client/server build IDs must match. A page on an old revision gets a reload
 message. Connection loss ends that guest's seat; requeue for a new token rather
@@ -129,10 +133,14 @@ than reusing a departed token. No persistent account/progression data is kept.
 
 ## Coding-agent operations
 
-The development account/URLs are pinned in `wrangler.jsonc`. The Rooms checkout
-must use the companion `feat/planz-development` branch; its current dev capacity
-ledger is already sealed and admissions are enabled. For a NEW environment,
-start drained and bootstrap before enabling admissions.
+The development account/URLs are pinned in `wrangler.jsonc`.
+
+`scripts/operator-development.mjs` was written for the retired
+`gameye-rooms-planz-development` Worker: it only accepts that origin, and its
+`secrets` and `bootstrap` commands run Wrangler against it. It does not work
+against the OVH matchmaker; tenant operations there go through the Rooms API
+with the platform token (see the Rooms runbook). The smoke scripts below go
+through this game's own gateway and still work.
 
 The operator helper uses `.gameye-rooms/development-operator.json` (ignored,
 mode 0600). Back it up securely; it contains deployment credentials and must
@@ -141,15 +149,6 @@ alongside it. `gameye-token` creates a dev-organization token with only
 `regions:read`, `session:start`, `session:read`, and `session:stop`.
 
 ```sh
-export ROOMS_CHECKOUT=/path/to/rooms-checkout
-export ROOMS_ORIGIN=https://gameye-rooms-planz-development.andrew-48d.workers.dev
-node scripts/operator-development.mjs status
-# First-time setup only:
-# node scripts/operator-development.mjs secrets
-# node scripts/operator-development.mjs bootstrap
-# GAMEYE_USER_ID=<dev-user-uuid> node scripts/operator-development.mjs gameye-token
-# node scripts/operator-development.mjs onboard
-
 # Allocates one real dev session for two guests, then disconnects them:
 node scripts/live-smoke.mjs
 # Optional real Chrome test (requires Playwright installed):
