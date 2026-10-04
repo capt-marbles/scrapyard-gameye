@@ -22,13 +22,23 @@ export async function readJsonBounded(response, limit = 65536) {
 }
 
 /**
- * @param {Pick<Env, 'ROOMS' | 'ROOMS_ORIGIN' | 'ROOMS_TENANT'> & { GAMEYE_IPV4_DNS_SUFFIX?: string }} env
+ * Rooms reached through a same-account service binding when one is configured,
+ * otherwise over its public HTTPS origin (the native OVH deployment).
+ * @param {{ ROOMS?: Fetcher }} env
+ * @param {Request} request
+ */
+export function roomsFetch(env, request) {
+  return env.ROOMS ? env.ROOMS.fetch(request) : fetch(request)
+}
+
+/**
+ * @param {Pick<Env, 'ROOMS_ORIGIN' | 'ROOMS_TENANT'> & { ROOMS?: Fetcher, GAMEYE_IPV4_DNS_SUFFIX?: string }} env
  * @param {string} roomId
  * @param {string} ticket
  */
 export async function gameTarget(env, roomId, ticket) {
   if (!/^[a-f0-9]{64}$/.test(roomId) || !ticket.startsWith(`v2.${env.ROOMS_TENANT}.`) || ticket.length > 16384) return null
-  const response = await env.ROOMS.fetch(new Request(`${env.ROOMS_ORIGIN}/v1/rooms/${roomId}?ticket=${encodeURIComponent(ticket)}`))
+  const response = await roomsFetch(env, new Request(`${env.ROOMS_ORIGIN}/v1/rooms/${roomId}?ticket=${encodeURIComponent(ticket)}`))
   if (!response.ok) { await response.body?.cancel(); return null }
   const room = await readJsonBounded(response)
   if (room.state !== 'live' || !room.playerToken || room.roomId !== roomId) return null
@@ -68,7 +78,7 @@ export default {
           if (input.tenantId !== env.ROOMS_TENANT) return new Response('Unknown tenant', { status: 400 })
           body = JSON.stringify(input)
         }
-        const response = await env.ROOMS.fetch(new Request(`${env.ROOMS_ORIGIN}${path}${url.search}`, { method: request.method, headers, body, redirect: 'manual' }))
+        const response = await roomsFetch(env, new Request(`${env.ROOMS_ORIGIN}${path}${url.search}`, { method: request.method, headers, body, redirect: 'manual' }))
         return new Response(response.body, { status: response.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
       }
       const game = url.pathname.match(/^\/game\/([a-f0-9]{64})$/)
