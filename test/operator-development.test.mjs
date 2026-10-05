@@ -7,7 +7,7 @@ const wrangler = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'ut
 const tag = `sha-${'a'.repeat(40)}`
 
 test('the Rooms origin defaults to the one pinned in wrangler.jsonc, and must be https', () => {
-  assert.equal(roomsOrigin({}, wrangler), 'https://137-74-108-96.sslip.io')
+  assert.equal(roomsOrigin({}, wrangler), 'https://matchmaker-dev.gameye.net')
   assert.equal(roomsOrigin({ ROOMS_ORIGIN: 'https://rooms.example/' }, wrangler), 'https://rooms.example')
   assert.throws(() => roomsOrigin({ ROOMS_ORIGIN: 'http://rooms.example' }, wrangler))
   assert.throws(() => roomsOrigin({}, '{}'))

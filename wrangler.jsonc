@@ -11,7 +11,7 @@
     "run_worker_first": ["/rooms/*", "/game/*"]
   },
   "vars": {
-    "ROOMS_ORIGIN": "https://137-74-108-96.sslip.io",
+    "ROOMS_ORIGIN": "https://matchmaker-dev.gameye.net",
     "ROOMS_TENANT": "scrapyard-dev",
     "GAMEYE_IPV4_DNS_SUFFIX": "sslip.io"
   },
