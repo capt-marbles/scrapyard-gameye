@@ -9,7 +9,7 @@ with [Gameye Rooms](https://github.com/Gameye/rooms-matchmaker) and Gameye's
 Choose **Play → Free For All → Gameye Rooms** in two browser windows. The
 current tenant is `scrapyard-dev` and uses the SHA tag in
 `deployment/tenant-config.json`. The Rooms API is
-https://137-74-108-96.sslip.io (the native gameye-rooms matchmaker on OVH).
+https://matchmaker-dev.gameye.net (the native gameye-rooms matchmaker on OVH).
 
 ## What runs where
 
@@ -74,7 +74,7 @@ Gameye pool `production` inside planz-development is not the production API.
 
 Rooms runs as the native Node matchmaker from Gameye/rooms-matchmaker (`server/`
 on the `feat/planz-development` branch), on one OVH server at
-https://137-74-108-96.sslip.io against Gameye planz-development. Its operations
+https://matchmaker-dev.gameye.net against Gameye planz-development. Its operations
 (deploy, restart, restore, capacity ledger) are in that repo's
 `docs/ovh-native-runbook.md`.
 
