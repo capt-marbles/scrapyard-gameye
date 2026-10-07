@@ -32,6 +32,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          # Without this, buildx attaches an attestation and GitHub sends no package webhook.
+          provenance: false
           tags: ghcr.io/capt-marbles/scrapyard-gameye:sha-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/capt-marbles/scrapyard-gameye
